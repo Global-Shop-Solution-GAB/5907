@@ -1,0 +1,217 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("WO Component Report 5907")
+Gui.Form..Size(4935,2325)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Form_UnLoad)
+Gui.Form.dtpCutOff.Create(DatePicker)
+Gui.Form.dtpCutOff.Size(1935,285)
+Gui.Form.dtpCutOff.Position(240,600)
+Gui.Form.lbl1.Create(Label,"Select Cutoff Date",True,1935,255,0,180,315,True,0,"Arial",8,-2147483633,0)
+Gui.Form.cmdOK.Create(Button)
+Gui.Form.cmdOK.Size(855,375)
+Gui.Form.cmdOK.Position(225,990)
+Gui.Form.cmdOK.Caption("OK")
+Gui.Form.cmdOK.Event(Click,cmdOK_Click)
+Gui.Form.proBar1.Create(ProgressBar)
+Gui.Form.proBar1.Size(4380,135)
+Gui.Form.proBar1.Position(240,1440)
+Gui.Form.proBar1.Visible(False)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'BN, Mar 2020
+'This project create a Crystal Report for WO Components
+'This is a pre-process script
+'Customer: Fabcon
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare	
+	
+	F.ODBC.Connection!conx.OpenCompanyConnection
+	gui.Form..Show
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: 5872 GCG_5872_BomWC.g2u {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Unload.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+
+	F.Intrinsic.Control.If(V.ODBC.conx.State,=,1)
+		F.ODBC.Connection!conx.close
+	F.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: 5872 GCG_5872_BomWC.g2u {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
+
+Program.Sub.cmdOK_Click.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare	
+	v.Local.sSQL.Declare
+	v.Local.sVal.Declare	
+	v.Local.iBIRunID.Declare
+	v.Local.iRptID.Declare
+	v.Local.iBILogID.Declare
+	v.Local.bEx.Declare
+	v.Local.iCnt.Declare
+	v.Local.sPart.Declare
+	V.Local.sLocation.Declare
+	v.Local.sFilter.Declare
+	v.Local.fOnhand.Declare
+	v.Local.fInitialNum.Declare	
+	
+	v.Local.dCutoff.Declare
+	
+	v.Local.dCutoff.Set(v.Screen.Form!dtpCutOff.Value)
+	gui.Form..Enabled(False)
+	
+	'Select a list of Open WO
+	f.Data.DataTable.CreateFromSQL("OpenWORaw","conx","select Job,Suffix,Job + '-' + Suffix as JS,Part,Location,SubString(Part,1,17) as Part17,SubString(Part,18,3) as Rev,QTY_ORDER,Case when Flag_WO_Released = 'Y' Then 'Released' Else 'Unreleased' End as Released,Convert('1900-01-01',SQL_Date) as Date_Start,Date_Due,Convert(0,SQL_Bit) as NotFullIssued from v_job_header where date_closed = '1900-01-01'",True)
+	f.Data.DataTable.AddColumn("OpenWORaw","UserId","String",v.Caller.User)
+	
+	'Get the dictionary of Date_start to fill Date Start for the Open WO list (OpenWO table)
+	f.Data.Dictionary.CreateFromSQL("DateStartDict","conx","Select o.Job + '-' + o.Suffix as JS,dateadd(day,-1,o.Date_Start) as Date_Start from v_Job_Operations o left join v_Job_header h on o.Job = h.Job and o.Suffix = h.Suffix where LMO = 'L' or LMO = 'O' and h.Date_Closed = '1900-01-01' Order by o.Job,o.Suffix,o.Seq")
+	f.Data.Dictionary.SetDefaultReturn("DateStartDict","01-01-1900")
+	f.Data.DataTable.FillFromDictionary("OpenWORaw","DateStartDict","JS","Date_Start")
+	'Get Dictionary of Jobs that has not fully issued
+	f.Data.Dictionary.CreateFromSQL("NotFullyIssuedDict","conx","Select Distinct Job + '-' + Suffix as JS,Convert(1,SQL_Bit) as NotFullIssued from V_JOB_COMMITMENTS ")
+	f.Data.Dictionary.SetDefaultReturn("NotFullyIssuedDict",False)
+	f.Data.DataTable.FillFromDictionary("OpenWORaw","NotFullyIssuedDict","JS","NotFullIssued")
+	
+	'Filter Jobs that has Date Start <= cuttoff and has not fully issued yet
+	f.Intrinsic.String.Build("Date_Start <= #{0}# and NotFullIssued = 1",v.Local.dCutoff.FormatMM/DD/YYYY,v.Local.sFilter)
+	f.Data.DataView.Create("OpenWORaw","dvOpenWORaw",22,v.Local.sFilter,"Date_Start,Job,Suffix")
+	f.Data.DataView.ToDataTable("OpenWORaw","dvOpenWORaw","OpenWO",True)
+	f.Data.DataTable.Close("OpenWORaw")
+	
+	'Check to move on for header
+	f.Intrinsic.Control.If(v.DataTable.OpenWO.RowCount,=,0)	
+		f.Intrinsic.UI.Msgbox("No Records found for header...")
+		f.Intrinsic.Control.CallSub("Unload")
+	f.Intrinsic.Control.EndIf
+
+	'Get Parts (Components) from Operations (link Job_Operations to Job_header to get Date_Closed = 1900-01-01 which is open WO). Order by Part, Date_Due for MRP calculating
+	f.Data.DataTable.CreateFromSQL("dtOpRaw","conx","Select o.Job + '-' + o.Suffix as JS,o.Job,o.Suffix,o.Seq,o.Part,Locn as Location ,SubString(o.Part,1,17) as Part17,SubString(o.Part,18,3) as Rev,o.Description,Hours_Estimated - Hours_Actual as Qty_Required,Convert(0,SQL_Float) as RunTotalRequiredIncludeMe,o.Part + o.Locn as PartLoc ,'' as SC, Convert(0,SQL_Float) as Qty_Onhand,o.Date_Due,Convert('1900-01-01',SQL_Date) as Date_Start,Convert(0,SQL_Bit) as NotFullIssued from v_Job_Operations o left join V_Job_Header h on o.Job = h.Job and o.Suffix = h.Suffix where h.Date_Closed = '1900-01-01' and LMO = 'M' and Seq < '995000'and Qty_Required > 0",True)
+	f.Data.DataTable.AddColumn("dtOpRaw","UserID","String",v.Caller.User)
+	
+	'Fill other fields from Inventory
+	'Source Code
+	f.Data.Dictionary.CreateFromSQL("SCDict","conx","Select Part + Location as PartLoc, Code_Source from Inventory_Mst2")
+	f.Data.Dictionary.SetDefaultReturn("SCDict","")
+	f.Data.DataTable.FillFromDictionary("dtOpRaw","SCDict","PartLoc","SC")
+	f.Data.Dictionary.Close("SCDict")
+	'Qty_Onhand	
+	f.Data.Dictionary.CreateFromSQL("OnhandDict","conx","Select Part + Location as PartLoc, Qty_Onhand from Inventory_Mstr")
+	f.Data.Dictionary.SetDefaultReturn("OnhandDict",0)
+	f.Data.DataTable.FillFromDictionary("dtOpRaw","OnhandDict","PartLoc","Qty_Onhand")
+	f.Data.Dictionary.Close("OnhandDict")	
+
+	'Filter by Start Date
+	f.Data.DataTable.FillFromDictionary("dtOpRaw","DateStartDict","JS","Date_Start")
+	f.Data.Dictionary.Close("DateStartDict")
+	'Fillter by Not Fully Issued
+	f.Data.DataTable.FillFromDictionary("dtOpRaw","NotFullyIssuedDict","JS","NotFullIssued")
+	f.Data.Dictionary.Close("NotFullyIssuedDict")
+	
+	f.Intrinsic.String.Build("Date_Start <= #{0}# and NotFullIssued = 1",v.Local.dCutoff.FormatMM/DD/YYYY,v.Local.sFilter)	
+	f.Data.DataView.Create("dtOpRaw","dvdtOpRaw",22,v.Local.sFilter,"Date_Start,Job,Suffix")
+	f.Data.DataView.ToDataTable("dtOpRaw","dvdtOpRaw","dtOp",True)
+	f.Data.DataTable.Close("dtOpRaw")	
+
+	'Check to move on for Lines
+	f.Intrinsic.Control.If(v.DataTable.dtOp.RowCount,=,0)	
+		f.Intrinsic.UI.Msgbox("No Records found for lines...")
+		f.Intrinsic.Control.CallSub("Unload")
+	f.Intrinsic.Control.EndIf
+	
+	'Do MRP calculation	
+	'Get distinct part
+	f.Data.DataView.Create("dtOp","dvOp")
+	f.Data.DataView.ToDataTableDistinct("dtOp","dvOp","dtPartLoc","Part*!*Location",True)
+	
+	'Create Final Table for MRP calculation
+	f.Data.DataTable.Clone("dtOP","dtOpFinal",True)
+	
+	'Set Progress Indicator
+	f.Intrinsic.Control.If(v.DataTable.dtPartLoc.RowCount,>,0)
+		gui.Form.proBar1.Max(v.DataTable.dtPartLoc.RowCount)
+		gui.Form.proBar1.Visible(True)
+	f.Intrinsic.Control.EndIf
+	
+	'RunToTalRequire
+	f.Intrinsic.Control.For(v.Local.iCnt,0,v.DataTable.dtPartLoc.RowCount--,1)
+		gui.Form.proBar1.Value(v.Local.iCnt)
+		v.Local.sPart.Set(v.DataTable.dtPartLoc(v.Local.iCnt).Part!FieldValString)
+		v.Local.sLocation.Set(v.DataTable.dtPartLoc(v.Local.iCnt).Location!FieldValString)
+		f.Intrinsic.String.Build("Part = '{0}' and Location = '{1}'",v.Local.sPart.PSQLFriendly,v.Local.sLocation,v.Local.sFilter)
+		f.Data.DataView.SetFilter("dtOp","dvOp",v.Local.sFilter)
+		f.Data.DataView.SetSort("dtOp","dvOp","Date_Start asc,Job,Suffix,Seq")
+		f.Data.DataView.ToDataTable("dtOp","dvOp","dtTemp",True)
+		'Running Total Requirement			
+		f.Data.DataTable.RunningTotal("dtTemp","Qty_Required",0,"+","RunTotalRequiredIncludeMe")
+		f.Data.DataTable.Merge("dtTemp","dtOpFinal",True,3)
+		f.Data.DataTable.Close("dtTemp")		
+	f.Intrinsic.Control.Next(v.Local.iCnt)
+	
+	gui.Form.proBar1.Visible(False)
+	f.Data.DataTable.Close("dtOp")
+	
+	f.Data.DataTable.AddExpressionColumn("dtOpFinal","RunTotalRequiredNotMe","Float","[RunTotalRequiredIncludeMe] - [Qty_Required]")
+	f.Data.DataTable.AddExpressionColumn("dtOpFinal","Qty_Avail","Float","[Qty_Onhand] - [RunTotalRequiredNotMe]")	
+	f.Data.DataTable.AddExpressionColumn("dtOpFinal","Qty_Short","Float","IIF([Qty_Required] > [Qty_Avail],[Qty_Required] - [Qty_Avail],0)")
+	
+	F.Intrinsic.UI.InvokeWaitDialog("Saving header...")	
+	f.Intrinsic.String.Build("Delete from GCG_5907_Header where UserID = '{0}'",v.Caller.User,v.Local.sSQL)
+	f.ODBC.Connection!conx.Execute(v.Local.sSQL)
+	f.Data.DataTable.SaveToDB("OpenWO","conx","GCG_5907_Header","",128,"UserID@!@UserID*!*Job@!@Job*!*Suffix@!@Suffix*!*JS@!@JS*!*Part@!@Part*!*Location@!@Location*!*Part17@!@Part17*!*Rev@!@Rev*!*Qty_Order@!@Qty_Order*!*Released@!@Released*!*Date_Start@!@Date_Start*!*Date_Due@!@Date_Due")
+	
+	f.Intrinsic.UI.ChangeWaitStatus("Saving Lines...")
+	f.Intrinsic.String.Build("Delete from GCG_5907_Lines where UserID = '{0}'",v.Caller.User,v.Local.sSQL)
+	f.ODBC.Connection!conx.Execute(v.Local.sSQL)
+	f.Data.DataTable.SaveToDB("dtOpFinal","conx","GCG_5907_Lines","",128,"UserID@!@UserID*!*JS@!@JS*!*Suffix@!@Suffix*!*Seq@!@Seq*!*Part@!@Part*!*Location@!@Location*!*Part17@!@Part17*!*Rev@!@Rev*!*Description@!@Description*!*Qty_Required@!@Qty_Required*!*PartLoc@!@PartLoc*!*SC@!@SC*!*Qty_Onhand@!@Qty_Onhand*!*Date_Due@!@Date_Due*!*Qty_Avail@!@Qty_Avail*!*Qty_Short@!@Qty_Short")	
+	
+	'Update can be fully kitted
+	f.Intrinsic.String.Build("Update GCG_5907_Header uh set uh.CanKit = 'Y' where uh.JS in (select o.js from GCG_5907_Lines o left join gcg_5907_header h on o.js = h.js and o.userid = h.userid where O.USERID = '{0}' group by o.js having sum(qty_short) = 0 )",v.Caller.User,v.Local.sSQL)
+	f.ODBC.Connection!conx.Execute(v.Local.sSQL)
+	
+	f.Intrinsic.UI.CloseWaitDialog
+	gui.Form..Visible(False)
+	
+	'Log Report
+	F.Global.BI.GetRunID(v.Local.iBIRunID)
+	f.Global.BI.GetIDFromName("GCG_5907_WOComponent.rpt",True,v.Local.iRptID)
+	F.Global.BI.StartLogging(v.Local.iBIRunID,v.Local.iRptID,-1,"",v.Local.iBILogID)	
+	'Stop Logging
+	F.Global.BI.StopLogging(v.Local.iBILogID)
+	f.Intrinsic.String.Build("{0}",v.Caller.User,v.Local.sVal)
+
+	F.Global.BI.RunReportPreProcessor(v.Local.iBIRunID,v.Local.iBILogID,"UserID",V.Local.sVal,"",-1,True,"",-1,"",-1,"","",v.Local.iBIRunID)	
+	f.Intrinsic.Control.CallSub("Unload")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: 5872 GCG_5872_BomWC.g2u {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdOK_Click.End
+
+Program.Sub.Form_UnLoad.Start
+f.Intrinsic.Control.CallSub("Unload")
+Program.Sub.Form_UnLoad.End
